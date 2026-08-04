@@ -1,0 +1,100 @@
+</script>
+<script>
+/* ==== 功能：记账 START ==== */
+const Money = {
+  curType:'out',
+  render(){
+    const records=Store.get('money',[]);const cats=Store.get('categories',['餐饮','购物','宝宝','交通','家居','人情','医疗','收入','其他']);
+    const now=new Date();const month=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
+    const mr=records.filter(r=>r.date.startsWith(month));const mout=mr.filter(r=>r.type==='out').reduce((s,r)=>s+r.amount,0);const min=mr.filter(r=>r.type==='in').reduce((s,r)=>s+r.amount,0);
+    let html=`<div class="card"><h2>📊 本月概况</h2><div class="stat-row"><span>支出</span><span class="big" style="color:#e74c3c">¥${mout.toFixed(2)}</span></div><div class="stat-row"><span>收入</span><span class="big" style="color:var(--ball-stone)">¥${min.toFixed(2)}</span></div><div class="stat-row"><span>结余</span><span class="big">¥${(min-mout).toFixed(2)}</span></div></div>`;
+    html+=`<div class="card"><h2>✏️ 记一笔</h2><div class="row" style="margin-bottom:8px"><button class="btn" id="moneyTypeOut" onclick="Money.setType('out')" style="flex:1">− 支出</button><button class="btn ghost" id="moneyTypeIn" onclick="Money.setType('in')" style="flex:1">+ 收入</button></div><input type="number" id="moneyAmount" placeholder="金额" step="0.01" style="margin-bottom:8px"><select id="moneyCategory" style="margin-bottom:8px">`;
+    cats.forEach(c=>html+=`<option value="${Util.esc(c)}">${Util.esc(c)}</option>`);
+    html+=`</select><input type="text" id="moneyNote" placeholder="备注（可选）" style="margin-bottom:8px"><label style="font-size:13px;display:flex;align-items:center;gap:6px;margin-bottom:8px"><input type="checkbox" id="moneyNoAI" style="width:auto"> 不参与AI分析</label><button class="btn" onclick="Money.add()">记录</button></div>`;
+    html+=`<div class="card"><h2>🧾 本月流水（${mr.length}）</h2>`;
+    if(mr.length)html+=mr.sort((a,b)=>b.date.localeCompare(a.date)).slice(0,30).map(r=>`<div class="item"><span class="grow">${r.type==='out'?'−':'+'}¥${r.amount} · ${Util.esc(r.category)}<br><span style="font-size:11px;color:var(--text-dim)">${Util.esc(r.date)} ${Util.esc(r.note||'')}${r.noAI?' · 🔒不分析':''}</span></span><button class="del" onclick="Money.del('${r.id}')">✕</button></div>`).join(''); else html+='<div class="empty">本月还没有记录</div>';
+    html+='</div>';
+    html+='<div class="card"><h2>📊 报告</h2><button class="btn ghost" onclick="Money.monthlyReport()" style="width:100%;margin-bottom:8px">月度报告</button><button class="btn ghost" onclick="Money.yearlyReport()" style="width:100%;margin-bottom:8px">年度报告</button><button class="btn" onclick="Money.aiAnalysis()" style="width:100%">🤖 AI分析不必要支出</button></div>';
+    document.getElementById('moneyContent').innerHTML=html;
+  },
+  setType(t){this.curType=t;document.getElementById('moneyTypeOut').className=t==='out'?'btn':'btn ghost';document.getElementById('moneyTypeIn').className=t==='in'?'btn':'btn ghost'},
+  add(){const amount=parseFloat(document.getElementById('moneyAmount').value);if(!amount)return;const category=document.getElementById('moneyCategory').value;const note=document.getElementById('moneyNote').value.trim();const noAI=document.getElementById('moneyNoAI').checked;const records=Store.get('money',[]);records.unshift({id:Util.uid(),type:this.curType,amount,category,note,noAI,date:Util.today()});Store.set('money',records);this.render()},
+  del(id){Store.set('money',Store.get('money',[]).filter(r=>r.id!==id));this.render()},
+  monthlyReport(){const records=Store.get('money',[]);const m=new Date().toISOString().slice(0,7);const recs=records.filter(r=>r.date.startsWith(m));const out=recs.filter(r=>r.type==='out');const bc={};out.forEach(r=>{bc[r.category]=(bc[r.category]||0)+r.amount});let h=`📊 ${m} 记账报告\n\n总支出：¥${out.reduce((s,r)=>s+r.amount,0).toFixed(2)}\n总收入：¥${recs.filter(r=>r.type==='in').reduce((s,r)=>s+r.amount,0).toFixed(2)}\n\n分类支出：\n`;Object.entries(bc).sort((a,b)=>b[1]-a[1]).forEach(([c,a])=>h+=`${c}：¥${a.toFixed(2)}\n`);alert(h)},
+  yearlyReport(){const records=Store.get('money',[]);const y=String(new Date().getFullYear());const recs=records.filter(r=>r.date.startsWith(y));const out=recs.filter(r=>r.type==='out');const bm={};out.forEach(r=>{const m=r.date.slice(0,7);bm[m]=(bm[m]||0)+r.amount});let h=`📊 ${y}年度记账报告\n\n全年总支出：¥${out.reduce((s,r)=>s+r.amount,0).toFixed(2)}\n\n月度支出：\n`;Object.keys(bm).sort().forEach(m=>h+=`${m}：¥${bm[m].toFixed(2)}\n`);alert(h)},
+  async aiAnalysis(){const key=Store.getSecret('deepseek');if(!key){UI.toast('请先在设置里填 DeepSeek key');App.go('settings');return}const records=Store.get('money',[]);const m=new Date().toISOString().slice(0,7);const out=records.filter(r=>r.date.startsWith(m)&&r.type==='out'&&!r.noAI);if(!out.length){UI.toast('本月没有可分析的支出');return}UI.toast('正在分析...');const bc={};out.forEach(r=>{bc[r.category]=(bc[r.category]||0)+r.amount});const summary=Object.entries(bc).map(([c,a])=>`${c}:${a}元`).join('，');try{const r=await fetch('https://api.deepseek.com/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+key},body:JSON.stringify({model:'deepseek-chat',messages:[{role:'user',content:`分析本月支出，指出哪些可能是不必要支出并给建议。支出明细：${summary}。总笔数${out.length}笔。请简洁回复。`}],stream:false})});if(!r.ok)throw new Error('接口返回 '+r.status);const data=await r.json();alert('🤖 AI 账目分析\n\n'+(data.choices?.[0]?.message?.content||'分析失败'))}catch(e){UI.toast('分析失败：'+e.message)}}
+};
+/* ==== 功能：记账 END ==== */
+
+</script>
+<script>
+/* ==== 功能：带娃日常 START ==== */
+const Daily = {
+  curTab:'check',
+  tab(name){this.curTab=name;document.querySelectorAll('#page-daily .tabs button').forEach(b=>b.classList.remove('on'));document.querySelectorAll('#page-daily .tab-pane').forEach(p=>p.classList.remove('on'));event?.target?.classList?.add('on');document.getElementById('daily-'+name).classList.add('on');this['render'+name.charAt(0).toUpperCase()+name.slice(1)]()},
+  render(){this.renderCheck()},
+  renderCheck(){const checks=Store.getDaily('kid_check',{});const items=['吃饭','睡觉','排便','洗澡'];let html='<div class="card"><h2>🌸 今日打卡</h2>';html+=items.map(item=>`<div class="item"><span class="box" onclick="Daily.toggleCheck('${item}')">${checks[item]?'✓':''}</span><span class="grow" style="${checks[item]?'text-decoration:line-through;color:var(--text-dim)':''}">${item}</span></div>`).join('');html+='</div>';document.getElementById('daily-check').innerHTML=html},
+  toggleCheck(item){const checks=Store.getDaily('kid_check',{});checks[item]=!checks[item];Store.setDaily('kid_check',checks);this.renderCheck()},
+  renderNote(){const notes=Store.get('kid_notes',[]);let html='<div class="card"><h2>📝 小事记</h2><textarea id="kidNote" placeholder="今天发生了什么有趣的？一句话就行" style="margin-bottom:8px"></textarea><button class="btn" onclick="Daily.addNote()">记录</button></div>';html+=notes.slice(0,50).map(n=>`<div class="item"><span class="grow">${Util.esc(n.text)}<br><span style="font-size:11px;color:var(--text-dim)">${Util.esc(n.date)}</span></span><button class="del" onclick="Daily.delNote('${n.id}')">✕</button></div>`).join('')||'<div class="empty">还没有记录</div>';document.getElementById('daily-note').innerHTML=html},
+  addNote(){const text=document.getElementById('kidNote').value.trim();if(!text)return;const notes=Store.get('kid_notes',[]);notes.unshift({id:Util.uid(),text,date:Util.today()});Store.set('kid_notes',notes);this.renderNote()},
+  delNote(id){Store.set('kid_notes',Store.get('kid_notes',[]).filter(n=>n.id!==id));this.renderNote()},
+  renderBook(){const books=Store.get('kid_books',[]);let html='<div class="card"><h2>📖 绘本记录</h2><input type="text" id="bookTitle" placeholder="绘本名称" style="margin-bottom:8px"><select id="bookLike" style="margin-bottom:8px"><option value="喜欢">喜欢</option><option value="一般">一般</option><option value="不喜欢">不喜欢</option></select><button class="btn" onclick="Daily.addBook()">添加</button></div>';html+=books.map(b=>`<div class="item"><span class="grow"><strong>${Util.esc(b.title)}</strong> <span class="tag ${b.like==='喜欢'?'t-stone':b.like==='不喜欢'?'t-monster':'t-masa'}">${Util.esc(b.like)}</span><br><span style="font-size:11px;color:var(--text-dim)">${Util.esc(b.date)}</span></span><button class="del" onclick="Daily.delBook('${b.id}')">✕</button></div>`).join('')||'<div class="empty">还没有绘本记录</div>';document.getElementById('daily-book').innerHTML=html},
+  addBook(){const title=document.getElementById('bookTitle').value.trim();if(!title)return;const like=document.getElementById('bookLike').value;const books=Store.get('kid_books',[]);books.unshift({id:Util.uid(),title,like,date:Util.today()});Store.set('kid_books',books);this.renderBook()},
+  delBook(id){Store.set('kid_books',Store.get('kid_books',[]).filter(b=>b.id!==id));this.renderBook()}
+};
+/* ==== 功能：带娃日常 END ==== */
+
+</script>
+<script>
+/* ==== 功能：带娃成长 START ==== */
+const Growth = {
+  curTab:'weight',
+  tab(name){this.curTab=name;document.querySelectorAll('#page-growth .tabs button').forEach(b=>b.classList.remove('on'));document.querySelectorAll('#page-growth .tab-pane').forEach(p=>p.classList.remove('on'));event?.target?.classList?.add('on');document.getElementById('growth-'+name).classList.add('on');this['render'+name.charAt(0).toUpperCase()+name.slice(1)]()},
+  render(){this.renderWeight()},
+  renderWeight(){const data=Store.get('kid_weight',[]);let html='<div class="card"><h2>📏 记录身高体重</h2><div class="row" style="margin-bottom:8px"><input type="number" id="wHeight" placeholder="身高cm" step="0.1" style="flex:1"><input type="number" id="wWeight" placeholder="体重kg" step="0.1" style="flex:1"></div><button class="btn" onclick="Growth.addWeight()">记录</button></div>';if(data.length){const wd=data.slice(-12);const min=Math.min(...wd.map(d=>d.weight))-1;const max=Math.max(...wd.map(d=>d.weight))+1;const pts=wd.map((d,i)=>`${i/(wd.length-1)*300},${100-(d.weight-min)/(max-min)*90}`).join(' ');html+=`<div class="card"><h2>📉 体重趋势</h2><svg viewBox="0 0 300 110" style="width:100%"><polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round"/></svg></div><div class="card"><h2>🗒 历史记录</h2>`;html+=data.slice().reverse().slice(0,20).map(d=>`<div class="item"><span class="grow">${Util.esc(d.date)} · ${d.height||'--'}cm / ${d.weight||'--'}kg</span><button class="del" onclick="Growth.delWeight('${d.id}')">✕</button></div>`).join('');html+='</div>'}document.getElementById('growth-weight').innerHTML=html},
+  addWeight(){const height=parseFloat(document.getElementById('wHeight').value)||null;const weight=parseFloat(document.getElementById('wWeight').value)||null;if(!height&&!weight)return;const data=Store.get('kid_weight',[]);data.push({id:Util.uid(),date:Util.today(),height,weight});data.sort((a,b)=>a.date.localeCompare(b.date));Store.set('kid_weight',data);this.renderWeight()},
+  delWeight(id){Store.set('kid_weight',Store.get('kid_weight',[]).filter(d=>d.id!==id));this.renderWeight()},
+  renderVaccine(){const records=Store.get('kid_vaccine',[]);let html='<div class="card"><h2>💉 体检/疫苗记录</h2><select id="vType" style="margin-bottom:8px"><option value="体检">体检</option><option value="疫苗">疫苗</option></select><input type="text" id="vName" placeholder="名称（如：百白破疫苗/2岁体检）" style="margin-bottom:8px"><input type="date" id="vDate" style="margin-bottom:8px"><input type="text" id="vNext" placeholder="下次时间（可选）" style="margin-bottom:8px"><textarea id="vNote" placeholder="备注（可选）" style="margin-bottom:8px"></textarea><button class="btn" onclick="Growth.addVaccine()">添加</button></div>';if(records.length){html+='<div class="card"><h2>📋 记录</h2>';records.sort((a,b)=>(b.date||'').localeCompare(a.date||'')).forEach(r=>{const days=r.next?Util.daysUntil(r.next):9999;let tag='';if(r.next&&days<=30)tag=`<span class="tag ${days<0?'t-monster':'t-masa'}">${days<0?'已过期':'还剩'+days+'天'}</span>`;html+=`<div class="item"><span class="grow"><strong>${Util.esc(r.type)}：${Util.esc(r.name)}</strong> ${tag}<br><span style="font-size:11px;color:var(--text-dim)">${Util.esc(r.date)}${r.next?' · 下次'+Util.esc(r.next):''}${r.note?' · '+Util.esc(r.note):''}</span></span><button class="del" onclick="Growth.delVaccine('${r.id}')">✕</button></div>`});html+='</div>'}document.getElementById('growth-vaccine').innerHTML=html},
+  addVaccine(){const type=document.getElementById('vType').value;const name=document.getElementById('vName').value.trim();const date=document.getElementById('vDate').value;const next=document.getElementById('vNext').value;const note=document.getElementById('vNote').value.trim();if(!name||!date)return;const records=Store.get('kid_vaccine',[]);records.push({id:Util.uid(),type,name,date,next,note});Store.set('kid_vaccine',records);this.renderVaccine()},
+  delVaccine(id){Store.set('kid_vaccine',Store.get('kid_vaccine',[]).filter(r=>r.id!==id));this.renderVaccine()},
+  renderFirst(){const records=Store.get('kid_first',[]);let html='<div class="card"><h2>🌟 第一次记录</h2><input type="text" id="fTitle" placeholder="第一次...（如：第一次自己穿鞋）" style="margin-bottom:8px"><input type="date" id="fDate" style="margin-bottom:8px"><textarea id="fNote" placeholder="描述（可选）" style="margin-bottom:8px"></textarea><button class="btn" onclick="Growth.addFirst()">记录</button></div>';if(records.length){html+='<div class="card"><h2>⏳ 成长里程碑</h2>';records.sort((a,b)=>(a.date||'').localeCompare(b.date||'')).forEach(r=>{html+=`<div class="item"><span class="grow"><strong>🌟 ${Util.esc(r.title)}</strong><br><span style="font-size:11px;color:var(--text-dim)">${Util.esc(r.date)}${r.note?' · '+Util.esc(r.note):''}</span></span><button class="del" onclick="Growth.delFirst('${r.id}')">✕</button></div>`});html+='</div>'}document.getElementById('growth-first').innerHTML=html},
+  addFirst(){const title=document.getElementById('fTitle').value.trim();const date=document.getElementById('fDate').value;const note=document.getElementById('fNote').value.trim();if(!title||!date)return;const records=Store.get('kid_first',[]);records.push({id:Util.uid(),title,date,note});Store.set('kid_first',records);this.renderFirst()},
+  delFirst(id){Store.set('kid_first',Store.get('kid_first',[]).filter(r=>r.id!==id));this.renderFirst()},
+  renderPlace(){const records=Store.get('kid_place',[]);let html='<div class="card"><h2>🗺️ 去过的地方</h2><input type="text" id="pName" placeholder="地点（如：人民公园）" style="margin-bottom:8px"><input type="date" id="pDate" style="margin-bottom:8px"><input type="file" id="pImg" accept="image/*" style="margin-bottom:8px"><textarea id="pNote" placeholder="描述（可选）" style="margin-bottom:8px"></textarea><button class="btn" onclick="Growth.addPlace()">记录</button></div>';if(records.length){html+='<div class="card"><h2>📸 足迹</h2>';records.sort((a,b)=>(b.date||'').localeCompare(a.date||'')).forEach(r=>{html+=`<div class="item">${r.img?`<img class="thumb" src="${r.img}">`:'<div class="thumb">🗺️</div>'}<span class="grow"><strong>${Util.esc(r.name)}</strong><br><span style="font-size:11px;color:var(--text-dim)">${Util.esc(r.date)}${r.note?' · '+Util.esc(r.note):''}</span></span><button class="del" onclick="Growth.delPlace('${r.id}')">✕</button></div>`});html+='</div>'}document.getElementById('growth-place').innerHTML=html},
+  async addPlace(){const name=document.getElementById('pName').value.trim();const date=document.getElementById('pDate').value;const note=document.getElementById('pNote').value.trim();const f=document.getElementById('pImg').files[0];if(!name||!date)return;let img='';if(f)img=await Util.compressImage(f,400,.7);const records=Store.get('kid_place',[]);records.push({id:Util.uid(),name,date,note,img});Store.set('kid_place',records);this.renderPlace()},
+  delPlace(id){Store.set('kid_place',Store.get('kid_place',[]).filter(r=>r.id!==id));this.renderPlace()}
+};
+/* ==== 功能：带娃成长 END ==== */
+
+</script>
+<script>
+/* ==== 功能：妈妈感受 START ==== */
+const Mom = {
+  curMood:'',
+  render(){
+    const records=Store.get('mom_feel',[]);
+    const moods=['😊','😢','😡','😴','🥰','😰','🤔','💪'];
+    let html='<div class="card"><h2>💭 今天感受如何？</h2><div class="row" style="flex-wrap:wrap;gap:8px;margin-bottom:12px">';
+    html+=moods.map(m=>`<button class="btn ghost" onclick="Mom.selectMood('${m}')" id="mood-${m}" style="font-size:24px;width:48px;height:48px;padding:0;border-radius:50%;display:flex;align-items:center;justify-content:center">${m}</button>`).join('');
+    html+='</div><textarea id="momText" placeholder="一句话写写今天（累了就写\'累\'两个字也行）" style="margin-bottom:8px"></textarea><button class="btn" onclick="Mom.save()">记录今天</button></div>';
+    if(records.length){
+      html+='<div class="card"><h2>📖 过往记录</h2>';
+      html+=records.sort((a,b)=>b.date.localeCompare(a.date)).slice(0,30).map(r=>`<div class="item"><span style="font-size:24px;flex-shrink:0">${r.mood||'📝'}</span><span class="grow">${Util.esc(r.text)}<br><span style="font-size:11px;color:var(--text-dim)">${Util.esc(r.date)}</span></span><button class="del" onclick="Mom.del('${r.id}')">✕</button></div>`).join('');
+      html+='</div>';
+    }
+    html+='<div class="motto"><div class="qm">"</div><div class="mline">就算失望 不能绝望</div><div class="mdiv"></div><div class="mline dim">— 五月天《倔强》</div></div>';
+    document.getElementById('momContent').innerHTML=html;
+  },
+  selectMood(m){this.curMood=m;document.querySelectorAll('[id^="mood-"]').forEach(b=>b.classList.remove('btn'));document.getElementById('mood-'+m).classList.add('btn')},
+  save(){const text=document.getElementById('momText').value.trim();if(!text&&!this.curMood){UI.toast('选个心情或写一句话吧');return}const records=Store.get('mom_feel',[]);records.unshift({id:Util.uid(),mood:this.curMood,text,date:Util.today()});Store.set('mom_feel',records);this.curMood='';this.render();UI.toast('已记录，辛苦了 💕')},
+  del(id){Store.set('mom_feel',Store.get('mom_feel',[]).filter(r=>r.id!==id));this.render()}
+};
+/* ==== 功能：妈妈感受 END ==== */
+
+</script>
+<script>
+App.init();
+</script>
+</body>
+</html>
+
